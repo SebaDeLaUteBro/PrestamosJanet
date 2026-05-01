@@ -1,5 +1,3 @@
-const LATE_FEE_FLAT = 30;
-
 const PLANS = {
     '5k-8': { principal: 5000, paymentsCount: 8, paymentAmount: 1000 },
     '10k-8': { principal: 10000, paymentsCount: 8, paymentAmount: 2000 },
@@ -175,20 +173,17 @@ function liquidateLoan(loanId, event) {
     const interestPerPayment = plan.paymentAmount - principalPerPayment;
 
     let pendingCount = 0;
-    let lateFeesTotal = 0;
 
     loan.payments.forEach(payment => {
         if (!payment.isPaid) {
             pendingCount++;
-            const lateFee = calculateLateFee(payment.dueDate, false, null);
-            lateFeesTotal += lateFee;
         }
     });
 
     const totalPendingOriginal = pendingCount * plan.paymentAmount;
     const totalInterestDiscounted = pendingCount * interestPerPayment;
     const totalPendingPrincipal = pendingCount * principalPerPayment;
-    const totalToPayWithFees = totalPendingPrincipal + lateFeesTotal;
+    const totalToPayWithFees = totalPendingPrincipal; // Sin multas
 
     const messageHtml = `
         <div style="margin-bottom: 1rem;">Estás a punto de liquidar <strong>${pendingCount} quincena(s) pendiente(s)</strong>.</div>
@@ -205,11 +200,6 @@ function liquidateLoan(loanId, event) {
                 <span>Capital Restante a Pagar:</span>
                 <span>${formatCurrency(totalPendingPrincipal)}</span>
             </div>
-            ${lateFeesTotal > 0 ? `
-            <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem; color: var(--danger-color);">
-                <span>Multas por Atraso:</span>
-                <span>+ ${formatCurrency(lateFeesTotal)}</span>
-            </div>` : ''}
             <div style="display: flex; justify-content: space-between; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color); font-weight: 700; font-size: 1.1rem; color: var(--text-primary);">
                 <span>Total a Recibir:</span>
                 <span>${formatCurrency(totalToPayWithFees)}</span>
@@ -232,26 +222,6 @@ function liquidateLoan(loanId, event) {
             saveData();
         }
     );
-}
-
-// Fixed flat 30 peso fee if late
-function calculateLateFee(dueDateStr, isPaid, paidDateStr) {
-    const dueDate = new Date(dueDateStr);
-    dueDate.setHours(0,0,0,0);
-    
-    let compareDate = new Date();
-    if (isPaid && paidDateStr) {
-        compareDate = new Date(paidDateStr);
-    }
-    compareDate.setHours(0,0,0,0);
-
-    const diffTime = compareDate.getTime() - dueDate.getTime();
-    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-    
-    if (diffDays > 0) {
-        return LATE_FEE_FLAT; // Just 30 pesos flat, not per day
-    }
-    return 0;
 }
 
 function formatCurrency(amount) {
@@ -281,12 +251,17 @@ function updateUI() {
         
         loans.forEach(loan => {
             let paidAmountForLoan = 0;
-            let totalLateFeesForLoan = 0;
             let hasPending = false;
+            
+            // Find next payment date
+            const nextPayment = loan.payments.find(p => !p.isPaid);
+            let nextPaymentDateHtml = `<span style="color: var(--success-color);"><i class='bx bx-check-double'></i> Préstamo Finalizado</span>`;
+            if (nextPayment) {
+                nextPaymentDateHtml = `<span style="color: var(--warning-color); font-weight: 500;"><i class='bx bx-calendar-event'></i> Siguiente pago: ${formatDate(nextPayment.dueDate)}</span>`;
+            }
 
             let paymentsHtml = loan.payments.map((payment, index) => {
-                const lateFee = calculateLateFee(payment.dueDate, payment.isPaid, payment.paidDate);
-                const totalDue = payment.amount + lateFee;
+                const totalDue = payment.amount;
                 
                 if (payment.isPaid) {
                     paidAmountForLoan += totalDue;
@@ -294,8 +269,6 @@ function updateUI() {
                 } else {
                     hasPending = true;
                 }
-                
-                if(lateFee > 0) totalLateFeesForLoan += lateFee;
 
                 let statusHtml = '';
                 let actionHtml = '';
@@ -303,9 +276,6 @@ function updateUI() {
                 if (payment.isPaid) {
                     statusHtml = `<span class="status paid"><i class='bx bx-check'></i> Pagado</span>`;
                     actionHtml = `<span style="color: var(--text-muted); font-size: 0.875rem;">Completado</span>`;
-                } else if (lateFee > 0) {
-                    statusHtml = `<span class="status late"><i class='bx bx-error-circle'></i> Atrasado</span>`;
-                    actionHtml = `<button class="btn-outline" onclick="markPaymentAsPaid('${loan.id}', '${payment.id}', event)">Marcar Pagado</button>`;
                 } else {
                     statusHtml = `<span class="status pending"><i class='bx bx-time'></i> Pendiente</span>`;
                     actionHtml = `<button class="btn-outline" onclick="markPaymentAsPaid('${loan.id}', '${payment.id}', event)">Marcar Pagado</button>`;
@@ -315,10 +285,7 @@ function updateUI() {
                     <tr>
                         <td>Q${index + 1}</td>
                         <td>${formatDate(payment.dueDate)}</td>
-                        <td>
-                            ${formatCurrency(payment.amount)}
-                            ${lateFee > 0 ? `<span class="late-fee-note">+${formatCurrency(lateFee)} multa</span>` : ''}
-                        </td>
+                        <td>${formatCurrency(payment.amount)}</td>
                         <td style="font-weight: 600;">${formatCurrency(totalDue)}</td>
                         <td>${statusHtml}</td>
                         <td>${actionHtml}</td>
@@ -328,14 +295,13 @@ function updateUI() {
 
             const isCompleted = !hasPending;
             
-            // Only count as active and lent if not completed (optional, depending on business logic. Let's count all lent but only active for active count)
             if (!isCompleted) activeLoansCount++;
             totalLent += loan.principal;
 
             const plan = PLANS[loan.planKey];
             let planTotalDynamic = 0;
             loan.payments.forEach(p => planTotalDynamic += p.amount);
-            const totalExpected = planTotalDynamic + totalLateFeesForLoan;
+            const totalExpected = planTotalDynamic; // No más multas
 
             const loanCardHtml = `
                 <div class="loan-card" style="${isCompleted ? 'opacity: 0.6;' : ''}">
@@ -345,7 +311,15 @@ function updateUI() {
                                 ${loan.borrower}
                                 ${isCompleted ? '<span class="completed-badge">Finalizado</span>' : ''}
                             </div>
-                            <div><span class="plan-badge">$${plan.principal/1000}k a ${plan.paymentsCount} quincenas</span></div>
+                            <div style="display: flex; flex-direction: column; gap: 0.3rem;">
+                                <div><span class="plan-badge">$${plan.principal/1000}k a ${plan.paymentsCount} quincenas</span></div>
+                                <div style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.3rem;">
+                                    <strong>Inicio:</strong> ${formatDate(loan.startDate)}
+                                </div>
+                                <div style="font-size: 0.85rem; color: var(--text-secondary);">
+                                    ${nextPaymentDateHtml}
+                                </div>
+                            </div>
                         </div>
                         <div class="loan-progress">
                             <div class="progress-text">Cobrado</div>
