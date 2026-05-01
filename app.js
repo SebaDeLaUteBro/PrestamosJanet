@@ -257,7 +257,7 @@ function updateUI() {
             const nextPayment = loan.payments.find(p => !p.isPaid);
             let nextPaymentDateHtml = `<span style="color: var(--success-color);"><i class='bx bx-check-double'></i> Préstamo Finalizado</span>`;
             if (nextPayment) {
-                nextPaymentDateHtml = `<span style="color: var(--warning-color); font-weight: 500;"><i class='bx bx-calendar-event'></i> Siguiente pago: ${formatDate(nextPayment.dueDate)}</span>`;
+                nextPaymentDateHtml = `<span style="color: var(--warning-color); font-weight: 500;"><i class='bx bx-calendar-event'></i> Siguiente pago: ${formatDate(nextPayment.dueDate)} <strong>(${formatCurrency(nextPayment.amount)})</strong></span>`;
             }
 
             let paymentsHtml = loan.payments.map((payment, index) => {
@@ -372,3 +372,4 @@ function updateUI() {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
